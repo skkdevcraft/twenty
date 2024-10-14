@@ -5,7 +5,7 @@ import pick from 'lodash.pick';
 import { useEffect } from 'react';
 import { FormProvider, useForm } from 'react-hook-form';
 import { useNavigate, useParams } from 'react-router-dom';
-import { H2Title, IconArchive, IconHierarchy2 } from 'twenty-ui';
+import { H2Title, IconArchive, IconArchiveOff } from 'twenty-ui';
 import { z } from 'zod';
 
 import { useFieldMetadataItem } from '@/object-metadata/hooks/useFieldMetadataItem';
@@ -25,7 +25,7 @@ import { SettingsDataModelFieldDescriptionForm } from '@/settings/data-model/fie
 import { SettingsDataModelFieldIconLabelForm } from '@/settings/data-model/fields/forms/components/SettingsDataModelFieldIconLabelForm';
 import { SettingsDataModelFieldSettingsFormCard } from '@/settings/data-model/fields/forms/components/SettingsDataModelFieldSettingsFormCard';
 import { settingsFieldFormSchema } from '@/settings/data-model/fields/forms/validation-schemas/settingsFieldFormSchema';
-import { SettingsSupportedFieldType } from '@/settings/data-model/types/SettingsSupportedFieldType';
+import { SettingsFieldType } from '@/settings/data-model/types/SettingsFieldType';
 import { getSettingsPagePath } from '@/settings/utils/getSettingsPagePath';
 import { AppPath } from '@/types/AppPath';
 import { SettingsPath } from '@/types/SettingsPath';
@@ -37,9 +37,11 @@ import { Section } from '@/ui/layout/section/components/Section';
 import { FieldMetadataType } from '~/generated-metadata/graphql';
 import { isDefined } from '~/utils/isDefined';
 
+//TODO: fix this type
 type SettingsDataModelFieldEditFormValues = z.infer<
   ReturnType<typeof settingsFieldFormSchema>
->;
+> &
+  any;
 
 const canPersistFieldMetadataItemUpdate = (
   fieldMetadataItem: FieldMetadataItem,
@@ -56,16 +58,15 @@ export const SettingsObjectFieldEdit = () => {
   const { enqueueSnackBar } = useSnackBar();
 
   const { objectSlug = '', fieldSlug = '' } = useParams();
-  const { findActiveObjectMetadataItemBySlug } =
-    useFilteredObjectMetadataItems();
+  const { findObjectMetadataItemBySlug } = useFilteredObjectMetadataItems();
 
-  const activeObjectMetadataItem =
-    findActiveObjectMetadataItemBySlug(objectSlug);
+  const objectMetadataItem = findObjectMetadataItemBySlug(objectSlug);
 
-  const { deactivateMetadataField } = useFieldMetadataItem();
-  const activeMetadataField = activeObjectMetadataItem?.fields.find(
-    (metadataField) =>
-      metadataField.isActive && getFieldSlug(metadataField) === fieldSlug,
+  const { deactivateMetadataField, activateMetadataField } =
+    useFieldMetadataItem();
+
+  const fieldMetadataItem = objectMetadataItem?.fields.find(
+    (fieldMetadataItem) => getFieldSlug(fieldMetadataItem) === fieldSlug,
   );
 
   const getRelationMetadata = useGetRelationMetadata();
@@ -74,11 +75,11 @@ export const SettingsObjectFieldEdit = () => {
   const apolloClient = useApolloClient();
 
   const { findManyRecordsQuery } = useFindManyRecordsQuery({
-    objectNameSingular: activeObjectMetadataItem?.nameSingular || '',
+    objectNameSingular: objectMetadataItem?.nameSingular || '',
   });
 
   const refetchRecords = async () => {
-    if (!activeObjectMetadataItem) return;
+    if (!objectMetadataItem) return;
     await apolloClient.query({
       query: findManyRecordsQuery,
       fetchPolicy: 'network-only',
@@ -89,27 +90,29 @@ export const SettingsObjectFieldEdit = () => {
     mode: 'onTouched',
     resolver: zodResolver(settingsFieldFormSchema()),
     values: {
-      icon: activeMetadataField?.icon ?? 'Icon123',
-      type: activeMetadataField?.type as SettingsSupportedFieldType,
-      label: activeMetadataField?.label ?? '',
-      description: activeMetadataField?.description,
+      icon: fieldMetadataItem?.icon ?? 'Icon',
+      type: fieldMetadataItem?.type as SettingsFieldType,
+      label: fieldMetadataItem?.label ?? '',
+      description: fieldMetadataItem?.description,
     },
   });
 
   useEffect(() => {
-    if (!activeObjectMetadataItem || !activeMetadataField) {
+    if (!objectMetadataItem || !fieldMetadataItem) {
       navigate(AppPath.NotFound);
     }
-  }, [activeMetadataField, activeObjectMetadataItem, navigate]);
+  }, [fieldMetadataItem, objectMetadataItem, navigate]);
 
   const { isDirty, isValid, isSubmitting } = formConfig.formState;
   const canSave = isDirty && isValid && !isSubmitting;
 
-  if (!activeObjectMetadataItem || !activeMetadataField) return null;
+  if (!isDefined(objectMetadataItem) || !isDefined(fieldMetadataItem)) {
+    return null;
+  }
 
   const isLabelIdentifier = isLabelIdentifierField({
-    fieldMetadataItem: activeMetadataField,
-    objectMetadataItem: activeObjectMetadataItem,
+    fieldMetadataItem: fieldMetadataItem,
+    objectMetadataItem: objectMetadataItem,
   });
 
   const handleSave = async (
@@ -125,7 +128,7 @@ export const SettingsObjectFieldEdit = () => {
       ) {
         const { relationFieldMetadataItem } =
           getRelationMetadata({
-            fieldMetadataItem: activeMetadataField,
+            fieldMetadataItem: fieldMetadataItem,
           }) ?? {};
 
         if (isDefined(relationFieldMetadataItem)) {
@@ -145,7 +148,7 @@ export const SettingsObjectFieldEdit = () => {
         );
 
         await updateOneFieldMetadataItem({
-          fieldMetadataIdToUpdate: activeMetadataField.id,
+          fieldMetadataIdToUpdate: fieldMetadataItem.id,
           updatePayload: formattedInput,
         });
       }
@@ -161,20 +164,24 @@ export const SettingsObjectFieldEdit = () => {
   };
 
   const handleDeactivate = async () => {
-    await deactivateMetadataField(activeMetadataField);
+    await deactivateMetadataField(fieldMetadataItem);
+    navigate(`/settings/objects/${objectSlug}`);
+  };
+
+  const handleActivate = async () => {
+    await activateMetadataField(fieldMetadataItem);
     navigate(`/settings/objects/${objectSlug}`);
   };
 
   const shouldDisplaySaveAndCancel =
-    canPersistFieldMetadataItemUpdate(activeMetadataField);
+    canPersistFieldMetadataItemUpdate(fieldMetadataItem);
 
   return (
     <RecordFieldValueSelectorContextProvider>
       {/* eslint-disable-next-line react/jsx-props-no-spreading */}
       <FormProvider {...formConfig}>
         <SubMenuTopBarContainer
-          Icon={IconHierarchy2}
-          title={activeMetadataField?.label}
+          title={fieldMetadataItem?.label}
           links={[
             {
               children: 'Workspace',
@@ -185,11 +192,11 @@ export const SettingsObjectFieldEdit = () => {
               href: '/settings/objects',
             },
             {
-              children: activeObjectMetadataItem.labelPlural,
+              children: objectMetadataItem.labelPlural,
               href: `/settings/objects/${objectSlug}`,
             },
             {
-              children: activeMetadataField.label,
+              children: fieldMetadataItem.label,
             },
           ]}
           actionButton={
@@ -210,17 +217,26 @@ export const SettingsObjectFieldEdit = () => {
                 description="The name and icon of this field"
               />
               <SettingsDataModelFieldIconLabelForm
-                disabled={!activeMetadataField.isCustom}
-                fieldMetadataItem={activeMetadataField}
+                disabled={!fieldMetadataItem.isCustom}
+                fieldMetadataItem={fieldMetadataItem}
                 maxLength={FIELD_NAME_MAXIMUM_LENGTH}
               />
             </Section>
             <Section>
-              <H2Title title="Values" description="The values of this field" />
+              {fieldMetadataItem.isUnique ? (
+                <H2Title
+                  title="Values"
+                  description="The values of this field must be unique"
+                />
+              ) : (
+                <H2Title
+                  title="Values"
+                  description="The values of this field"
+                />
+              )}
               <SettingsDataModelFieldSettingsFormCard
-                disableCurrencyForm
-                fieldMetadataItem={activeMetadataField}
-                objectMetadataItem={activeObjectMetadataItem}
+                fieldMetadataItem={fieldMetadataItem}
+                objectMetadataItem={objectMetadataItem}
               />
             </Section>
             <Section>
@@ -229,8 +245,8 @@ export const SettingsObjectFieldEdit = () => {
                 description="The description of this field"
               />
               <SettingsDataModelFieldDescriptionForm
-                disabled={!activeMetadataField.isCustom}
-                fieldMetadataItem={activeMetadataField}
+                disabled={!fieldMetadataItem.isCustom}
+                fieldMetadataItem={fieldMetadataItem}
               />
             </Section>
             {!isLabelIdentifier && (
@@ -240,11 +256,17 @@ export const SettingsObjectFieldEdit = () => {
                   description="Deactivate this field"
                 />
                 <Button
-                  Icon={IconArchive}
+                  Icon={
+                    fieldMetadataItem.isActive ? IconArchive : IconArchiveOff
+                  }
                   variant="secondary"
-                  title="Deactivate"
+                  title={fieldMetadataItem.isActive ? 'Deactivate' : 'Activate'}
                   size="small"
-                  onClick={handleDeactivate}
+                  onClick={
+                    fieldMetadataItem.isActive
+                      ? handleDeactivate
+                      : handleActivate
+                  }
                 />
               </Section>
             )}
